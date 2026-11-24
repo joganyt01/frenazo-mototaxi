@@ -15,6 +15,7 @@ export function CrashModal({
   const handleRetryClick = (event) => {
     event.stopPropagation();
     audioManager.stopCurrent();
+    audioManager.startEngineLoop();
     if (onRetry) {
       onRetry();
     }

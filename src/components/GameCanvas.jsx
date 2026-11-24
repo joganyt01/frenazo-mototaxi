@@ -29,6 +29,7 @@ export function GameCanvas({
   const onHudUpdateRef = useRef(onHudUpdate);
   const onCrashRef = useRef(onCrash);
   const crashedRef = useRef(false);
+  const prevHoldingRef = useRef(false);
 
   const gameStateRef = useRef({
     x: START_X,
@@ -47,14 +48,22 @@ export function GameCanvas({
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
+ // Actualiza el useEffect de isHolding por este:
   useEffect(() => {
+    const wasHolding = prevHoldingRef.current;
+    prevHoldingRef.current = isHolding;
     isHoldingRef.current = isHolding;
-  }, [isHolding]);
+
+    if (!wasHolding && isHolding && isPlaying && !crashedRef.current) {
+      audioManager.playKeyPress();
+    }
+  }, [isHolding, isPlaying]);
 
   useEffect(() => {
     onHudUpdateRef.current = onHudUpdate;
     onCrashRef.current = onCrash;
   }, [onHudUpdate, onCrash]);
+
 
   useEffect(() => {
     crashedRef.current = false;
@@ -222,6 +231,7 @@ export function GameCanvas({
       }
 
       audioManager.playRandomInsult();
+      audioManager.stopEngineLoop();
 
       const meters = Math.max(0, (state.x - START_X) / PIXELS_PER_METER);
       if (onHudUpdateRef.current) {

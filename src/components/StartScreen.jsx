@@ -1,9 +1,10 @@
 import { audioManager } from '../utils/audioManager';
 
 export function StartScreen({ bestMeters = 0, onStart }) {
-  const handleStartClick = (event) => {
+ const handleStartClick = (event) => {
     event.stopPropagation();
     audioManager.unlockAll();
+    audioManager.startEngineLoop();
     if (onStart) {
       onStart();
     }
