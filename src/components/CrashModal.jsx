@@ -53,7 +53,7 @@ export function CrashModal({
           className="crash-modal__retry"
           onClick={handleRetryClick}
         >
-          ¡OTRA VEZ![cite: 3]
+          ¡OTRA VEZ!
         </button>
       </div>
     </div>

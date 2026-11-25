@@ -32,7 +32,8 @@ function saveBestMeters(meters) {
 }
 
 export function App() {
-  const [gameState, setGameState] = useState('START'); // 'START' | 'PLAYING' | 'CRASHED'
+  // 'START' | 'READY_TAP' | 'PLAYING' | 'CRASHED'
+  const [gameState, setGameState] = useState('START');
   const [isHolding, setIsHolding] = useState(false);
   const [runId, setRunId] = useState(0);
   const [attemptCount, setAttemptCount] = useState(0);
@@ -52,20 +53,30 @@ export function App() {
   const handleStartGame = useCallback(() => {
     audioManager.unlockAll();
     audioManager.stopCurrent();
+    audioManager.startEngineLoop();
     setMeters(0);
     setWheelieBalance(0);
     setIsHolding(false);
     setRunId((prev) => prev + 1);
-    setGameState('PLAYING');
+    setGameState('READY_TAP');
+  }, []);
+
+  const handleFirstTapLaunch = useCallback((holdAfterStart = true) => {
+    setGameState((prev) => {
+      if (prev !== 'READY_TAP') return prev;
+      setIsHolding(Boolean(holdAfterStart));
+      return 'PLAYING';
+    });
   }, []);
 
   const handleRetryGame = useCallback(() => {
     audioManager.stopCurrent();
+    audioManager.startEngineLoop();
     setMeters(0);
     setWheelieBalance(0);
     setIsHolding(false);
     setRunId((prev) => prev + 1);
-    setGameState('PLAYING');
+    setGameState('READY_TAP');
   }, []);
 
   const handleHudUpdate = useCallback(({ meters: nextMeters, wheelieBalance: nextWheelie }) => {
@@ -102,12 +113,15 @@ export function App() {
     [attemptCount]
   );
 
-  // Controles de teclado durante la partida (Espacio / Flecha arriba)
+  // Controles de teclado (Espacio / Flecha arriba)
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.repeat) return;
       if (event.code === 'Space' || event.code === 'ArrowUp') {
-        if (gameState === 'PLAYING') {
+        if (gameState === 'READY_TAP') {
+          event.preventDefault();
+          handleFirstTapLaunch(true);
+        } else if (gameState === 'PLAYING') {
           event.preventDefault();
           setIsHolding(true);
         }
@@ -133,12 +147,19 @@ export function App() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onWindowBlur);
     };
-  }, [gameState]);
+  }, [gameState, handleFirstTapLaunch]);
 
   const handleStagePointerDown = (event) => {
-    if (gameState !== 'PLAYING') return;
     if (event.target.closest('button')) return;
-    setIsHolding(true);
+
+    if (gameState === 'READY_TAP') {
+      handleFirstTapLaunch(true);
+      return;
+    }
+
+    if (gameState === 'PLAYING') {
+      setIsHolding(true);
+    }
   };
 
   const releaseHold = () => {
@@ -164,11 +185,24 @@ export function App() {
 
         <GameCanvas
           isPlaying={gameState === 'PLAYING'}
-          isHolding={isHolding}
+          isHolding={gameState === 'PLAYING' ? isHolding : false}
           runId={runId}
           onHudUpdate={handleHudUpdate}
           onCrash={handleCrash}
         />
+
+        {gameState === 'READY_TAP' && (
+          <div className="center-tap-overlay" aria-live="polite">
+            <img
+              src={`${import.meta.env.BASE_URL}images/tap-gesture.gif`}
+              alt="Haz tap hacia arriba para comenzar"
+              className="center-tap-overlay__gif"
+            />
+            <span className="center-tap-overlay__label">
+              ¡Haz tap hacia arriba para arrancar!
+            </span>
+          </div>
+        )}
 
         {gameState === 'START' && (
           <StartScreen

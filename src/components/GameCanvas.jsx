@@ -97,11 +97,11 @@ export function GameCanvas({
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+       const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: 'user',
-            width: { ideal: 720 },
-            height: { ideal: 1280 },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
           },
           audio: false,
         });
@@ -249,7 +249,7 @@ export function GameCanvas({
       }
     };
 
-    const drawCameraBackground = (width, roadY) => {
+ const drawCameraBackground = (width, roadY) => {
       const video = videoRef.current;
       const hasLiveVideo =
         video &&
@@ -257,38 +257,34 @@ export function GameCanvas({
         video.videoWidth > 0 &&
         video.videoHeight > 0;
 
-      if (hasLiveVideo) {
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-        const scale = Math.max(width / vw, roadY / vh);
-        const drawW = vw * scale;
-        const drawH = vh * scale;
-        const offsetX = (width - drawW) / 2;
-        const offsetY = (roadY - drawH) / 2;
-
-        // Efecto espejo natural para cámara frontal tipo filtro/TikTok
-        ctx.save();
-        ctx.translate(width / 2, 0);
-        ctx.scale(-1, 1);
-        ctx.translate(-width / 2, 0);
-        ctx.drawImage(video, offsetX, offsetY, drawW, drawH);
-        ctx.restore();
-
-        // Capa oscura suave para mejorar legibilidad del mototaxi y los huecos
-        ctx.fillStyle = 'rgba(9, 13, 22, 0.36)';
+      if (!hasLiveVideo) {
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, roadY);
+        skyGrad.addColorStop(0, '#0f172a');
+        skyGrad.addColorStop(0.65, '#1e293b');
+        skyGrad.addColorStop(1, '#334155');
+        ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, width, roadY);
         return;
       }
 
-      // Respaldo si aún carga o no hay permiso de cámara
-      const skyGrad = ctx.createLinearGradient(0, 0, 0, roadY);
-      skyGrad.addColorStop(0, '#0f172a');
-      skyGrad.addColorStop(0.65, '#1e293b');
-      skyGrad.addColorStop(1, '#334155');
-      ctx.fillStyle = skyGrad;
-      ctx.fillRect(0, 0, width, roadY);
-    };
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const scale = Math.max(width / vw, roadY / vh);
+      const drawW = vw * scale;
+      const drawH = vh * scale;
+      const offsetX = (width - drawW) / 2;
+      const offsetY = (roadY - drawH) / 2;
 
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
+      // Efecto espejo natural para cámara frontal tipo filtro/TikTok
+      ctx.translate(width / 2, 0);
+      ctx.scale(-1, 1);
+      ctx.translate(-width / 2, 0);
+      ctx.drawImage(video, offsetX, offsetY, drawW, drawH);
+      ctx.restore();
+    };
     const step = (now) => {
       const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
