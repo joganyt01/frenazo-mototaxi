@@ -12,6 +12,7 @@ import {
 import './App.css';
 
 const BEST_STORAGE_KEY = 'frenazo_mototaxi_best_meters';
+const GOAL_METERS = 100;
 
 function loadBestMeters() {
   try {
@@ -32,7 +33,7 @@ function saveBestMeters(meters) {
 }
 
 export function App() {
-  // 'START' | 'READY_TAP' | 'PLAYING' | 'CRASHED'
+  // 'START' | 'READY_TAP' | 'PLAYING' | 'CRASHED' | 'WON'
   const [gameState, setGameState] = useState('START');
   const [isHolding, setIsHolding] = useState(false);
   const [runId, setRunId] = useState(0);
@@ -113,6 +114,32 @@ export function App() {
     [attemptCount]
   );
 
+  const handleWin = useCallback(
+    ({ meters: winMeters }) => {
+      setIsHolding(false);
+      setGameState('WON');
+
+      const finalMeters = Math.max(GOAL_METERS, Math.floor(winMeters));
+      const previousBest = loadBestMeters();
+      const beatRecord = finalMeters > previousBest;
+      const updatedBest = beatRecord ? finalMeters : previousBest;
+
+      if (beatRecord) {
+        saveBestMeters(updatedBest);
+        setBestMeters(updatedBest);
+      }
+
+      setCrashSummary({
+        meters: finalMeters,
+        isNewRecord: beatRecord,
+        title: '¡CORONASTE EL CRÁTER DE NEIVA!',
+        message: 'Pasaste el hueco más largo del camino y llegaste sano a la meta.',
+        reasonText: `Meta alcanzada: ${GOAL_METERS} m`,
+      });
+    },
+    []
+  );
+
   // Controles de teclado (Espacio / Flecha arriba)
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -180,6 +207,7 @@ export function App() {
             meters={meters}
             bestMeters={bestMeters}
             wheelieBalance={wheelieBalance}
+            goalMeters={GOAL_METERS}
           />
         )}
 
@@ -187,8 +215,10 @@ export function App() {
           isPlaying={gameState === 'PLAYING'}
           isHolding={gameState === 'PLAYING' ? isHolding : false}
           runId={runId}
+          goalMeters={GOAL_METERS}
           onHudUpdate={handleHudUpdate}
           onCrash={handleCrash}
+          onWin={handleWin}
         />
 
         {gameState === 'READY_TAP' && (
@@ -221,6 +251,36 @@ export function App() {
             reasonText={crashSummary.reasonText}
             onRetry={handleRetryGame}
           />
+        )}
+
+        {gameState === 'WON' && (
+          <section className="crash-modal" role="dialog" aria-label="Meta alcanzada">
+            <div className="crash-modal__card">
+              <span className="crash-modal__badge">¡META COMPLETADA!</span>
+              <h2 className="crash-modal__title">{crashSummary.title}</h2>
+              <p className="crash-modal__message">{crashSummary.message}</p>
+              <div className="crash-modal__stats">
+                <div>
+                  <span>Distancia</span>
+                  <strong>{crashSummary.meters} m</strong>
+                </div>
+                <div>
+                  <span>Récord</span>
+                  <strong>{bestMeters} m</strong>
+                </div>
+              </div>
+              {crashSummary.isNewRecord && (
+                <div className="crash-modal__record">¡NUEVO RÉCORD!</div>
+              )}
+              <button
+                type="button"
+                className="crash-modal__cta"
+                onClick={handleRetryGame}
+              >
+                ¡JUGAR DE NUEVO!
+              </button>
+            </div>
+          </section>
         )}
       </div>
     </main>

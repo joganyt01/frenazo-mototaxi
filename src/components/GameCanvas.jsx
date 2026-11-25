@@ -11,50 +11,98 @@ const START_X = 110;
 const BASE_SPEED = 225; // px/seg
 const MAX_EXTRA_SPEED = 145; // aumento progresivo
 
+function attachFinalCraterBeforeGoal(road, goalMeters) {
+  if (!road || !Array.isArray(road.obstacles)) return;
+  const goalX = START_X + goalMeters * PIXELS_PER_METER;
+  const craterWidth = Math.round(PIXELS_PER_METER * 7.5); // Hueco extra largo (~7.5 m)
+  const craterX = Math.max(
+    START_X + PIXELS_PER_METER * 12,
+    goalX - craterWidth - PIXELS_PER_METER * 4.5
+  );
+
+  // Evitar duplicarlo si ya existe en esta partida
+  const alreadyHasFinal = road.obstacles.some((obs) => obs.isFinalCrater);
+  if (alreadyHasFinal) return;
+
+  // Quitar obstáculos normales que choquen con el hueco final o queden tras la meta
+  road.obstacles = road.obstacles.filter((obs) => {
+    const overlapsCrater =
+      obs.x + obs.width > craterX - 35 && obs.x < craterX + craterWidth + 35;
+    const pastGoal = obs.x + obs.width >= goalX - 10;
+    return !overlapsCrater && !pastGoal;
+  });
+
+  road.obstacles.push({
+    type: 'crater',
+    reasonCode: 'CRATER_HIT',
+    x: craterX,
+    width: craterWidth,
+    depth: ROAD_HEIGHT - 10,
+    isFinalCrater: true,
+  });
+
+  road.obstacles.sort((a, b) => a.x - b.x);
+}
+
 export function GameCanvas({
   isPlaying,
   isHolding,
   runId = 0,
+  goalMeters = 100,
   onHudUpdate,
   onCrash,
+  onWin,
 }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const videoRef = useRef(null);
-
   const [cameraStatus, setCameraStatus] = useState('loading'); // 'loading' | 'ready' | 'fallback'
 
   const isPlayingRef = useRef(isPlaying);
   const isHoldingRef = useRef(isHolding);
+  const goalMetersRef = useRef(goalMeters);
   const onHudUpdateRef = useRef(onHudUpdate);
   const onCrashRef = useRef(onCrash);
+  const onWinRef = useRef(onWin);
+
   const crashedRef = useRef(false);
+  const wonRef = useRef(false);
   const prevHoldingRef = useRef(false);
 
-  const gameStateRef = useRef({
-    x: START_X,
-    speed: BASE_SPEED,
-    wheelie: 0, // 0 (plano) -> 100 (volteado de espaldas)
-    yLift: 0, // elevación visual ligera al hacer wheelie
-    road: createInitialRoadState(),
-    shakeTime: 0,
-    shakeIntensity: 0,
-    flyingCargo: [],
-    spawnedCargo: false,
-    crashReason: 'CRATER_HIT',
-  });
+  const createFreshState = () => {
+    const road = createInitialRoadState();
+    ensureRoadAhead(road, START_X, 2400);
+    attachFinalCraterBeforeGoal(road, goalMetersRef.current);
+    return {
+      x: START_X,
+      speed: BASE_SPEED,
+      wheelie: 0, // 0 (plano) -> 100 (volteado de espaldas)
+      yLift: 0, // elevación visual ligera al hacer wheelie
+      road,
+      shakeTime: 0,
+      shakeIntensity: 0,
+      flyingCargo: [],
+      spawnedCargo: false,
+      crashReason: 'CRATER_HIT',
+    };
+  };
+
+  const gameStateRef = useRef(createFreshState());
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
- // Actualiza el useEffect de isHolding por este:
+  useEffect(() => {
+    goalMetersRef.current = goalMeters;
+  }, [goalMeters]);
+
   useEffect(() => {
     const wasHolding = prevHoldingRef.current;
     prevHoldingRef.current = isHolding;
     isHoldingRef.current = isHolding;
 
-    if (!wasHolding && isHolding && isPlaying && !crashedRef.current) {
+    if (!wasHolding && isHolding && isPlaying && !crashedRef.current && !wonRef.current) {
       audioManager.playKeyPress();
     }
   }, [isHolding, isPlaying]);
@@ -62,23 +110,13 @@ export function GameCanvas({
   useEffect(() => {
     onHudUpdateRef.current = onHudUpdate;
     onCrashRef.current = onCrash;
-  }, [onHudUpdate, onCrash]);
-
+    onWinRef.current = onWin;
+  }, [onHudUpdate, onCrash, onWin]);
 
   useEffect(() => {
     crashedRef.current = false;
-    gameStateRef.current = {
-      x: START_X,
-      speed: BASE_SPEED,
-      wheelie: 0,
-      yLift: 0,
-      road: createInitialRoadState(),
-      shakeTime: 0,
-      shakeIntensity: 0,
-      flyingCargo: [],
-      spawnedCargo: false,
-      crashReason: 'CRATER_HIT',
-    };
+    wonRef.current = false;
+    gameStateRef.current = createFreshState();
 
     if (onHudUpdateRef.current) {
       onHudUpdateRef.current({ meters: 0, wheelieBalance: 0 });
@@ -97,7 +135,7 @@ export function GameCanvas({
       }
 
       try {
-       const stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: 'user',
             width: { ideal: 1280 },
@@ -116,8 +154,8 @@ export function GameCanvas({
         if (videoEl) {
           videoEl.srcObject = stream;
           await videoEl.play().catch(() => {});
+          setCameraStatus('ready');
         }
-        setCameraStatus('ready');
       } catch {
         if (!cancelled) {
           setCameraStatus('fallback');
@@ -162,16 +200,18 @@ export function GameCanvas({
       ) {
         canvas.width = Math.floor(width * dpr);
         canvas.height = Math.floor(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       return { width, height };
     };
 
     let viewport = syncSize();
+
     const handleResize = () => {
       viewport = syncSize();
     };
+
     window.addEventListener('resize', handleResize);
 
     const spawnFlyingCargo = (screenX, roadY, flipBackward) => {
@@ -182,8 +222,8 @@ export function GameCanvas({
           color: '#d97706',
           w: 28,
           h: 22,
-          x: screenX - 10,
-          y: roadY - 46,
+          x: screenX - 46,
+          y: roadY - 10,
           vx: dir * (130 + Math.random() * 90),
           vy: -(340 + Math.random() * 140),
           angle: 0,
@@ -217,7 +257,7 @@ export function GameCanvas({
     };
 
     const triggerCrash = (reasonCode, screenX, roadY) => {
-      if (crashedRef.current) return;
+      if (crashedRef.current || wonRef.current) return;
       crashedRef.current = true;
 
       const state = gameStateRef.current;
@@ -233,7 +273,11 @@ export function GameCanvas({
       audioManager.playRandomInsult();
       audioManager.stopEngineLoop();
 
-      const meters = Math.max(0, (state.x - START_X) / PIXELS_PER_METER);
+      const meters = Math.min(
+        goalMetersRef.current,
+        Math.max(0, (state.x - START_X) / PIXELS_PER_METER)
+      );
+
       if (onHudUpdateRef.current) {
         onHudUpdateRef.current({
           meters,
@@ -249,7 +293,32 @@ export function GameCanvas({
       }
     };
 
- const drawCameraBackground = (width, roadY) => {
+    const triggerWin = (roadY) => {
+      if (wonRef.current || crashedRef.current) return;
+      wonRef.current = true;
+
+      const state = gameStateRef.current;
+      const targetMeters = goalMetersRef.current;
+      state.x = START_X + targetMeters * PIXELS_PER_METER;
+      state.speed = 0;
+
+      audioManager.stopEngineLoop();
+
+      if (onHudUpdateRef.current) {
+        onHudUpdateRef.current({
+          meters: targetMeters,
+          wheelieBalance: Math.min(100, state.wheelie),
+        });
+      }
+
+      if (onWinRef.current) {
+        onWinRef.current({
+          meters: targetMeters,
+        });
+      }
+    };
+
+    const drawCameraBackground = (width, roadY) => {
       const video = videoRef.current;
       const hasLiveVideo =
         video &&
@@ -285,6 +354,7 @@ export function GameCanvas({
       ctx.drawImage(video, offsetX, offsetY, drawW, drawH);
       ctx.restore();
     };
+
     const step = (now) => {
       const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
@@ -292,12 +362,13 @@ export function GameCanvas({
       const { width, height } = viewport;
       const roadY = height - ROAD_HEIGHT;
       const state = gameStateRef.current;
+      const goalX = START_X + goalMetersRef.current * PIXELS_PER_METER;
 
       if (state.shakeTime > 0) {
         state.shakeTime = Math.max(0, state.shakeTime - dt);
       }
 
-      if (isPlayingRef.current && !crashedRef.current) {
+      if (isPlayingRef.current && !crashedRef.current && !wonRef.current) {
         const metersNow = Math.max(0, (state.x - START_X) / PIXELS_PER_METER);
         const speedBoost = Math.min(MAX_EXTRA_SPEED, metersNow * 1.15);
         const holdingNow = isHoldingRef.current;
@@ -306,10 +377,12 @@ export function GameCanvas({
         const targetSpeed = holdingNow
           ? (BASE_SPEED + speedBoost) * 0.78
           : BASE_SPEED + speedBoost;
+
         state.speed += (targetSpeed - state.speed) * Math.min(1, dt * 10);
         state.x += state.speed * dt;
 
         ensureRoadAhead(state.road, state.x, width + 900);
+        attachFinalCraterBeforeGoal(state.road, goalMetersRef.current);
 
         // Física de wheelie (mantener sube, soltar baja)
         if (holdingNow) {
@@ -317,7 +390,6 @@ export function GameCanvas({
         } else {
           state.wheelie = Math.max(0, state.wheelie - 88 * dt);
         }
-
         state.yLift = (Math.min(100, state.wheelie) / 100) * 16;
 
         const cameraX = state.x - Math.min(120, width * 0.22);
@@ -345,11 +417,19 @@ export function GameCanvas({
           }
         }
 
-        if (now - lastHudEmit > 75) {
+        // 3. ¿Llegó a la meta?
+        if (!crashedRef.current && !wonRef.current && state.x >= goalX) {
+          triggerWin(roadY);
+        }
+
+        if (!crashedRef.current && !wonRef.current && now - lastHudEmit > 75) {
           lastHudEmit = now;
           if (onHudUpdateRef.current) {
             onHudUpdateRef.current({
-              meters: Math.max(0, (state.x - START_X) / PIXELS_PER_METER),
+              meters: Math.min(
+                goalMetersRef.current,
+                Math.max(0, (state.x - START_X) / PIXELS_PER_METER)
+              ),
               wheelieBalance: Math.min(100, state.wheelie),
             });
           }
@@ -367,10 +447,10 @@ export function GameCanvas({
         }
       }
 
-      // --- DIBUJADO ---
+      // DIBUJADO
       ctx.clearRect(0, 0, width, height);
-
       ctx.save();
+
       if (state.shakeTime > 0) {
         const mag = state.shakeIntensity * (state.shakeTime / 0.45);
         const dx = (Math.random() - 0.5) * 2 * mag;
@@ -378,7 +458,6 @@ export function GameCanvas({
         ctx.translate(dx, dy);
       }
 
-      // Fondo con cámara en vivo (o respaldo oscuro si no hay cámara)
       drawCameraBackground(width, roadY);
 
       const cameraX = state.x - Math.min(120, width * 0.22);
@@ -410,20 +489,64 @@ export function GameCanvas({
         } else {
           ctx.fillStyle = '#09090b';
           ctx.fillRect(sx, roadY, obs.width, obs.depth);
-
-          ctx.strokeStyle = '#fb923c';
-          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = obs.isFinalCrater ? '#ef4444' : '#fb923c';
+          ctx.lineWidth = obs.isFinalCrater ? 3.5 : 2.5;
           ctx.strokeRect(sx, roadY, obs.width, obs.depth);
+
+          if (obs.isFinalCrater) {
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(sx, roadY - 22, Math.min(obs.width, 132), 18);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText('¡ÚLTIMO CRÁTER!', sx + 8, roadY - 10);
+          }
         }
+      }
+
+      // Dibujar línea de META
+      const goalScreenX = goalX - cameraX;
+      if (goalScreenX > -40 && goalScreenX < width + 60) {
+        ctx.save();
+        const checkerSize = 8;
+        const rows = Math.ceil(ROAD_HEIGHT / checkerSize);
+        for (let r = 0; r < rows; r += 1) {
+          for (let c = 0; c < 2; c += 1) {
+            ctx.fillStyle = (r + c) % 2 === 0 ? '#ffffff' : '#18181b';
+            ctx.fillRect(
+              goalScreenX + c * checkerSize,
+              roadY + r * checkerSize,
+              checkerSize,
+              checkerSize
+            );
+          }
+        }
+
+        // Poste y bandera de META
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(goalScreenX + 4, roadY);
+        ctx.lineTo(goalScreenX + 4, roadY - 68);
+        ctx.stroke();
+
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(goalScreenX + 4, roadY - 68, 52, 22);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('META', goalScreenX + 30, roadY - 53);
+        ctx.restore();
       }
 
       // Dibujar mototaxi
       const motoScreenX = state.x - cameraX;
       const engineVib =
-        isPlayingRef.current && !crashedRef.current
+        isPlayingRef.current && !crashedRef.current && !wonRef.current
           ? Math.sin(now * 0.045) * 1.5
           : 0;
-      const pivotX = motoScreenX - 18;
+
+      const pivotX = motoScreenX;
       const pivotY = roadY - 12 - state.yLift + engineVib;
       const tiltAngle = -((Math.min(105, state.wheelie) / 100) * 0.72);
 
@@ -431,13 +554,11 @@ export function GameCanvas({
       ctx.translate(pivotX, pivotY);
       ctx.rotate(tiltAngle);
 
-      // Cabina / carrocería del mototaxi
       ctx.fillStyle = isHoldingRef.current ? '#facc15' : '#f97316';
       ctx.fillRect(-14, -30, 52, 24);
       ctx.fillStyle = '#fef08a';
       ctx.fillRect(14, -26, 18, 12);
 
-      // Carga encima si aún no ha chocado
       if (!state.spawnedCargo) {
         ctx.fillStyle = '#d97706';
         ctx.fillRect(-10, -40, 22, 10);
@@ -481,7 +602,6 @@ export function GameCanvas({
       }
 
       ctx.restore();
-
       rafId = requestAnimationFrame(step);
     };
 
